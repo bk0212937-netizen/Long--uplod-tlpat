@@ -96,7 +96,6 @@
         .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a3a5a; }
         .detail-label { font-weight: 700; color: #FFD700; }
         .close-modal { background: #FF3366; margin-top: 20px; }
-        /* العقد المخصص */
         .contract-box {
             background: rgba(0,0,0,0.6);
             border: 2px solid #FFD700;
@@ -115,6 +114,15 @@
             font-size: 1.1rem;
             margin-top: 10px;
         }
+        .stats-card {
+            background: #0f1424;
+            padding: 15px;
+            border-radius: 20px;
+            margin-bottom: 20px;
+            border-right: 4px solid #FFD700;
+        }
+        .stats-card h3 { color: #00D9FF; margin-bottom: 10px; }
+        .stats-card p { margin: 8px 0; }
         @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .tab-btn { padding: 8px 20px; } }
     </style>
 </head>
@@ -178,7 +186,6 @@
                 <div class="file-row"><span class="file-label">صورة البطاقة الخلفية للعميل</span><input type="file" id="imgClientBack" accept="image/*"></div>
             </div>
 
-            <!-- عقد الموافقة (يظهر ديناميكيًا باسم العميل ورقمه) -->
             <div id="contractDiv" class="contract-box" style="display:none;">
                 <h4><i class="fas fa-file-signature"></i> عقد التمويل وإخلاء المسؤولية</h4>
                 <div id="contractText"></div>
@@ -204,6 +211,7 @@
     <div id="adminPanel" style="display:none; margin-top: 30px;">
         <div style="background: #0f1424; border-radius: 28px; padding: 25px;">
             <h2><i class="fas fa-chalkboard-user"></i> إدارة الطلبات (المشرف فقط)</h2>
+            <div id="statsContainer"></div> <!-- مكان عرض الإحصائيات -->
             <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:25px;">
                 <button id="sendReportBtn"><i class="fas fa-envelope"></i> إرسال تقرير Excel للبريد</button>
                 <button id="refreshAdminBtn"><i class="fas fa-refresh"></i> تحديث الجدول</button>
@@ -216,7 +224,7 @@
 
 <script>
     (function(){
-        // إعدادات EmailJS (تأكد من صحتها)
+        // ==================== إعدادات EmailJS ====================
         const EMAILJS_CONFIG = {
             serviceId: 'service_zoiqvwn',
             templateId: 'template_w0vbf2i',
@@ -225,7 +233,15 @@
         };
         const ADMIN_PASSWORD = 'MiDo@2025##';
         
-        // جلب أو توليد معرف فريد للجهاز (لمنع التسجيل المتعدد من نفس المتصفح)
+        // ==================== عداد الزيارات لهذه الصفحة (نموذج التسجيل) ====================
+        let formViews = localStorage.getItem('cashFasterFormViews');
+        formViews = formViews ? Number(formViews) + 1 : 1;
+        localStorage.setItem('cashFasterFormViews', formViews);
+        
+        // ==================== قراءة عدد زيارات الصفحة الرئيسية (من نفس التخزين) ====================
+        let mainPageViews = localStorage.getItem('cashFasterPageViews') || 0;
+        
+        // ==================== بيانات الطلبات والتسجيلات ====================
         let deviceId = localStorage.getItem('deviceId');
         if(!deviceId) {
             deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
@@ -233,7 +249,6 @@
         }
         
         let applications = JSON.parse(localStorage.getItem('cashFasterApps')) || [];
-        // تسجيل الأجهزة التي قامت بالتسجيل بالفعل لمنع تكرار التسجيل من نفس الجهاز حتى لو غير البطاقة
         let registeredDevices = JSON.parse(localStorage.getItem('registeredDevices')) || [];
         
         function saveToLocal() { 
@@ -241,7 +256,7 @@
             localStorage.setItem('registeredDevices', JSON.stringify(registeredDevices));
         }
         
-        // ضغط الصور
+        // دالة ضغط الصور (نفس السابق)
         function compressImage(file, maxWidth=800, quality=0.6) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -288,7 +303,7 @@
             return 'غير مسجل';
         }
         
-        // تحديث نص العقد تلقائيًا عند تغيير الاسم أو الرقم القومي
+        // العقد
         const fullNameInput = document.getElementById('fullName');
         const nationalIdInput = document.getElementById('nationalId');
         const contractDiv = document.getElementById('contractDiv');
@@ -314,32 +329,26 @@
                 submitBtn.style.display = 'none';
             }
         }
-        
         fullNameInput.addEventListener('input', updateContract);
         nationalIdInput.addEventListener('input', updateContract);
         
-        // منع التسجيل لنفس البطاقة أو نفس الجهاز
         function canRegister(nationalId) {
-            // التحقق من وجود نفس البطاقة في الطلبات السابقة
-            const existingApp = applications.find(app => app.nationalId === nationalId);
-            if(existingApp) return { allowed: false, reason: 'هذا الرقم القومي مسجل مسبقًا.' };
-            // التحقق من أن هذا الجهاز لم يسجل من قبل (deviceId)
-            if(registeredDevices.includes(deviceId)) return { allowed: false, reason: 'لا يمكنك التسجيل أكثر من مرة من نفس الجهاز.' };
+            if(applications.find(app => app.nationalId === nationalId)) 
+                return { allowed: false, reason: 'هذا الرقم القومي مسجل مسبقًا.' };
+            if(registeredDevices.includes(deviceId)) 
+                return { allowed: false, reason: 'لا يمكنك التسجيل أكثر من مرة من نفس الجهاز.' };
             return { allowed: true };
         }
         
-        // تسجيل طلب جديد
+        // إرسال الطلب مع تحديث عداد الطلبات
         document.getElementById('loanForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const nationalId = nationalIdInput.value.trim();
             const check = canRegister(nationalId);
-            if(!check.allowed) {
-                alert(check.reason);
-                return;
-            }
+            if(!check.allowed) { alert(check.reason); return; }
             
-            const termsCheck = document.getElementById('acceptContractBtn');
-            if(!termsCheck) return;
+            const termsBtn = document.getElementById('acceptContractBtn');
+            if(!termsBtn) return;
             
             const msgDiv = document.getElementById('registerMsg');
             msgDiv.innerHTML = '<div class="success-msg"><i class="fas fa-spinner fa-spin"></i> جاري حفظ الطلب...</div>';
@@ -382,16 +391,24 @@
                 registeredDevices.push(deviceId);
                 saveToLocal();
                 
+                // تحديث عداد الطلبات في localStorage
+                let totalApps = localStorage.getItem('totalApplications');
+                totalApps = totalApps ? Number(totalApps) + 1 : 1;
+                localStorage.setItem('totalApplications', totalApps);
+                
                 // إعادة تعيين النموذج
                 document.getElementById('loanForm').reset();
                 toggleWalletFields();
                 toggleActiveNumberField();
                 contractDiv.style.display = 'none';
                 submitBtn.style.display = 'none';
+                contractAccepted = false; // إعادة تعيين قبول العقد للجلسة
+                if(document.getElementById('acceptContractBtn')) {
+                    document.getElementById('acceptContractBtn').style.opacity = '1';
+                    document.getElementById('acceptContractBtn').disabled = false;
+                }
                 
-                // رسالة منبثقة + تحويل العميل إلى تبويب الاستعلام
                 alert(`✅ تم استلام طلبك بنجاح! رقم طلبك: ${newApp.appNumber}\nيمكنك الآن متابعة حالة طلبك من خلال تبويب "استعلام برقم البطاقة".`);
-                // التبديل إلى تبويب الاستعلام
                 document.querySelector('[data-tab="query"]').click();
                 msgDiv.innerHTML = '';
             } catch(err) { 
@@ -400,7 +417,6 @@
             }
         });
         
-        // قبول العقد (زر منفصل)
         let contractAccepted = false;
         document.getElementById('acceptContractBtn')?.addEventListener('click', () => {
             contractAccepted = true;
@@ -409,8 +425,6 @@
             document.getElementById('acceptContractBtn').disabled = true;
         });
         
-        // تعديل حدث إرسال النموذج ليشمل التحقق من قبول العقد
-        const originalSubmit = document.getElementById('loanForm').submit;
         document.getElementById('loanForm').addEventListener('submit', function(e) {
             if(!contractAccepted) {
                 e.preventDefault();
@@ -419,7 +433,7 @@
             }
         });
         
-        // استعلام العميل برقم البطاقة
+        // الاستعلام
         document.getElementById('doQueryBtn').addEventListener('click', () => {
             const natId = document.getElementById('queryNationalId').value.trim();
             const resDiv = document.getElementById('queryResult');
@@ -430,7 +444,6 @@
             let statusText = app.status === 'مراجعة' ? 'قيد المراجعة' : (app.status === 'قبول' ? '✅ موافقة مبدئية' : '❌ مرفوض');
             let extra = '';
             if(app.status === 'قبول') {
-                // رابط واتساب يحتوي على اسم العميل ورقمه القومي تلقائيًا
                 const whatsappMsg = `السلام عليكم، أنا ${app.fullName} (الرقم القومي ${app.nationalId})، تمت الموافقة على طلبي رقم ${app.appNumber} بمبلغ ${app.loanAmount} ج.م، أريد متابعة إجراءات صرف القرض.`;
                 extra = `<div style="margin-top:20px; background:#00D9FF20; padding:15px; border-radius:20px;">
                             <i class="fab fa-whatsapp"></i> <strong>تمت الموافقة على طلبك!</strong><br>
@@ -453,7 +466,7 @@
             </div>`;
         });
         
-        // ========== لوحة المشرف (مخفية) ==========
+        // ==================== لوحة المشرف والإحصائيات ====================
         let adminUnlocked = false;
         let adminDiv = document.getElementById('adminPanel');
         let clickCount = 0, timeout;
@@ -467,13 +480,30 @@
                     adminUnlocked = true;
                     adminDiv.style.display = 'block';
                     renderAdminTable();
+                    showStats(); // عرض الإحصائيات
                     alert('تم فتح لوحة التحكم');
                 } else alert('كلمة المرور غير صحيحة');
                 clickCount = 0;
             }
         });
         
-        function showFullDetails(app) {
+        function showStats() {
+            const statsContainer = document.getElementById('statsContainer');
+            const totalApps = localStorage.getItem('totalApplications') || applications.length;
+            const statsHtml = `
+                <div class="stats-card">
+                    <h3><i class="fas fa-chart-line"></i> إحصائيات المنصة</h3>
+                    <p>👀 عدد زيارات الصفحة الرئيسية (موقع التعريف): <strong style="color:#FFD700;">${mainPageViews}</strong></p>
+                    <p>📄 عدد زيارات نموذج التسجيل (هذه الصفحة): <strong style="color:#FFD700;">${formViews}</strong></p>
+                    <p>📝 عدد الطلبات المسجلة: <strong style="color:#FFD700;">${totalApps}</strong></p>
+                    <hr style="border-color:#2a3a5a; margin:10px 0;">
+                    <p style="font-size:0.8rem;">🔄 آخر تحديث تلقائي عند كل زيارة أو تسجيل جديد</p>
+                </div>
+            `;
+            statsContainer.innerHTML = statsHtml;
+        }
+        
+        function showFullDetails(app) { /* ... كما هو ... */ 
             const modal = document.createElement('div');
             modal.className = 'detail-modal';
             let imagesHtml = '';
@@ -539,7 +569,7 @@
                     </select></td>
                 </tr>`;
             });
-            html += '</tbody></table><button id="saveStatusBtn" style="margin-top:20px;">حفظ التغييرات</button>';
+            html += '</tbody><td><button id="saveStatusBtn" style="margin-top:20px;">حفظ التغييرات</button>';
             container.innerHTML = html;
             document.querySelectorAll('.view-details-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
@@ -554,11 +584,11 @@
                 });
                 saveToLocal();
                 renderAdminTable();
+                showStats(); // تحديث الإحصائيات بعد تغيير الحالة
                 alert('تم تحديث حالات الطلبات بنجاح');
             });
         }
         
-        // إرسال التقرير بالبريد
         async function sendExcelReport() {
             if(!applications.length) { alert('لا توجد طلبات لإرسالها'); return; }
             emailjs.init(EMAILJS_CONFIG.publicKey);
@@ -599,7 +629,7 @@
         }
         
         document.getElementById('sendReportBtn')?.addEventListener('click', sendExcelReport);
-        document.getElementById('refreshAdminBtn')?.addEventListener('click', () => { if(adminUnlocked) renderAdminTable(); });
+        document.getElementById('refreshAdminBtn')?.addEventListener('click', () => { if(adminUnlocked) { renderAdminTable(); showStats(); } });
         
         // التبديل بين التبويبات
         const tabs = document.querySelectorAll('.tab-btn');
@@ -614,7 +644,6 @@
             });
         });
         
-        // تحديث العقد أول مرة
         updateContract();
     })();
 </script>
