@@ -54,7 +54,6 @@
         th, td { padding: 12px 8px; border-bottom: 1px solid #2a3a5a; text-align: center; vertical-align: middle; }
         th { background: #00D9FF20; color: #00D9FF; }
         select.status-select { width: 120px; margin: 0 auto; background: #1a1f30; color: white; border-radius: 30px; padding: 6px; }
-        button.small { padding: 6px 12px; font-size: 0.8rem; margin-top: 5px; }
         .password-overlay {
             position: fixed;
             top: 0;
@@ -150,7 +149,7 @@
         <div id="queryResult"></div>
     </div>
 
-    <!-- لوحة المشرف (ستظهر بعد كلمة المرور) -->
+    <!-- لوحة المشرف -->
     <div id="adminPanel" class="panel">
         <h2><i class="fas fa-chalkboard-user"></i> إدارة الطلبات (المشرف فقط)</h2>
         <div id="adminControls" style="margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap;">
@@ -172,19 +171,35 @@
             toEmail: 'badr31940@gmail.com'
         };
         
-        // كلمة مرور لوحة التحكم
         const ADMIN_PASSWORD = 'MiDo@2025##';
-        
-        // قاعدة البيانات
         let applications = JSON.parse(localStorage.getItem('cashFasterApps')) || [];
         function saveToLocal() { localStorage.setItem('cashFasterApps', JSON.stringify(applications)); }
         function generateAppNumber() { return 'CF-' + Date.now() + '-' + Math.floor(Math.random() * 10000); }
         
-        // تحويل الملفات إلى base64
-        function readFileAsBase64(file) {
+        // دالة ضغط الصور (تقليل الجودة والحجم)
+        function compressImage(file, maxWidth = 800, quality = 0.6) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                reader.onload = () => resolve(reader.result.split(',')[1] || '');
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > maxWidth) {
+                            height = (height * maxWidth) / width;
+                            width = maxWidth;
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        const base64 = canvas.toDataURL('image/jpeg', quality).split(',')[1];
+                        resolve(base64);
+                    };
+                    img.onerror = reject;
+                    img.src = e.target.result;
+                };
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
@@ -197,11 +212,12 @@
             return 'غير مسجل';
         }
         
-        // إرسال الطلب
+        // إرسال الطلب مع ضغط الصور
         document.getElementById('loanForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const registerMsg = document.getElementById('registerMsg');
             registerMsg.innerHTML = '<div class="success-msg"><i class="fas fa-spinner fa-spin"></i> جاري حفظ الطلب...</div>';
+            
             try {
                 const imgGuarFront = document.getElementById('imgGuarFront').files[0];
                 const imgGuarBack = document.getElementById('imgGuarBack').files[0];
@@ -209,13 +225,14 @@
                 const imgClientFront = document.getElementById('imgClientFront').files[0];
                 const imgClientBack = document.getElementById('imgClientBack').files[0];
                 
-                const base64Images = {
-                    guarFront: imgGuarFront ? await readFileAsBase64(imgGuarFront) : '',
-                    guarBack: imgGuarBack ? await readFileAsBase64(imgGuarBack) : '',
-                    selfie: imgSelfie ? await readFileAsBase64(imgSelfie) : '',
-                    clientFront: imgClientFront ? await readFileAsBase64(imgClientFront) : '',
-                    clientBack: imgClientBack ? await readFileAsBase64(imgClientBack) : ''
-                };
+                // ضغط الصور إذا وجدت
+                const [guarFront, guarBack, selfie, clientFront, clientBack] = await Promise.all([
+                    imgGuarFront ? compressImage(imgGuarFront) : Promise.resolve(''),
+                    imgGuarBack ? compressImage(imgGuarBack) : Promise.resolve(''),
+                    imgSelfie ? compressImage(imgSelfie) : Promise.resolve(''),
+                    imgClientFront ? compressImage(imgClientFront) : Promise.resolve(''),
+                    imgClientBack ? compressImage(imgClientBack) : Promise.resolve('')
+                ]);
                 
                 const newApp = {
                     appNumber: generateAppNumber(),
@@ -242,28 +259,31 @@
                     loanAmount: document.getElementById('loanAmountReq').value,
                     reason: document.getElementById('reason').value,
                     otherLoans: document.getElementById('otherLoans').value,
-                    images: base64Images,
+                    images: {
+                        guarFront, guarBack, selfie, clientFront, clientBack
+                    },
                     status: 'مراجعة'
                 };
+                
                 applications.unshift(newApp);
                 saveToLocal();
                 document.getElementById('loanForm').reset();
                 registerMsg.innerHTML = `<div class="success-msg"><i class="fas fa-check-circle"></i> تم تسجيل طلبك بنجاح! رقم طلبك: <strong>${newApp.appNumber}</strong><br>يمكنك استخدام هذا الرقم للاستعلام لاحقاً.</div>`;
                 setTimeout(() => { registerMsg.innerHTML = ''; }, 8000);
-            } catch(err) { console.error(err); registerMsg.innerHTML = '<div class="success-msg" style="background:#FF336620;">حدث خطأ، حاول مرة أخرى.</div>'; }
+            } catch(err) {
+                console.error(err);
+                registerMsg.innerHTML = '<div class="success-msg" style="background:#FF336620;">فشل تحميل الصور. تأكد من أن حجم الصور أقل من 2 ميجابايت أو حاول مرة أخرى.</div>';
+            }
         });
         
-        // الاستعلام
+        // باقي الكود (الاستعلام، لوحة المشرف، إرسال التقرير) - كما هو دون تغيير
         document.getElementById('doQueryBtn').addEventListener('click', () => {
             const queryNum = document.getElementById('queryNum').value.trim();
             const resultDiv = document.getElementById('queryResult');
             if (!queryNum) { resultDiv.innerHTML = '<div class="query-result">الرجاء إدخال رقم الطلب.</div>'; return; }
             const app = applications.find(a => a.appNumber === queryNum);
             if (!app) { resultDiv.innerHTML = '<div class="query-result">⚠️ لا يوجد طلب بهذا الرقم.</div>'; return; }
-            let statusClass = '';
-            if (app.status === 'مراجعة') statusClass = 'status-review';
-            else if (app.status === 'قبول') statusClass = 'status-accept';
-            else statusClass = 'status-reject';
+            let statusClass = app.status === 'مراجعة' ? 'status-review' : (app.status === 'قبول' ? 'status-accept' : 'status-reject');
             resultDiv.innerHTML = `<div class="query-result">
                 <h3>بيانات الطلب</h3>
                 <p><strong>الاسم:</strong> ${app.fullName}</p>
@@ -273,11 +293,10 @@
             </div>`;
         });
         
-        // عرض جدول المشرف
         function renderAdminTable() {
             const container = document.getElementById('adminTableContainer');
             if (!applications.length) { container.innerHTML = '<p style="color:#ccc;">لا توجد طلبات مسجلة بعد.</p>'; return; }
-            let html = '</table><thead><tr><th>رقم الطلب</th><th>العميل</th><th>البطاقة</th><th>المبلغ</th><th>المحفظة</th><th>الضامن</th><th>الحالة</th><th>تغيير الحالة</th></tr></thead><tbody>';
+            let html = '<table><thead><tr><th>رقم الطلب</th><th>العميل</th><th>البطاقة</th><th>المبلغ</th><th>المحفظة</th><th>الضامن</th><th>الحالة</th><th>تغيير الحالة</th></tr></thead><tbody>';
             applications.forEach((app, idx) => {
                 html += `<tr>
                     <td>${app.appNumber}</td>
@@ -294,11 +313,10 @@
                     </select></td>
                 </tr>`;
             });
-            html += '</tbody></table><button id="saveStatusChangesBtn" style="margin-top:20px;"><i class="fas fa-save"></i> حفظ التغييرات</button>';
+            html += '</tbody><td><button id="saveStatusChangesBtn" style="margin-top:20px;"><i class="fas fa-save"></i> حفظ التغييرات</button>';
             container.innerHTML = html;
             document.getElementById('saveStatusChangesBtn')?.addEventListener('click', () => {
-                const selects = document.querySelectorAll('.status-select');
-                selects.forEach(select => {
+                document.querySelectorAll('.status-select').forEach(select => {
                     const idx = parseInt(select.dataset.idx);
                     if (!isNaN(idx) && applications[idx]) applications[idx].status = select.value;
                 });
@@ -308,35 +326,18 @@
             });
         }
         
-        // إرسال التقرير عبر EmailJS بالبيانات المدمجة
         async function sendExcelReport() {
             emailjs.init(EMAILJS_CONFIG.publicKey);
             const exportData = applications.map(app => ({
-                'رقم الطلب': app.appNumber,
-                'اسم العميل': app.fullName,
-                'الرقم القومي': app.nationalId,
-                'العنوان': app.address,
-                'الجنس': app.gender,
-                'الحالة الاجتماعية': app.marital,
-                'الشهادة': app.degree,
-                'مصدر الدخل': app.incomeSource,
-                'تفاصيل الوظيفة': app.jobDetails,
-                'الدخل الشهري': app.monthlyIncome,
-                'واتساب': app.whatsapp,
-                'فيسبوك': app.facebook,
-                'نوع المحفظة': app.walletType,
-                'رقم المحفظة': app.walletNumber,
-                'الرقم النشط': app.activeNumber,
-                'درجة قرابة الضامن': app.guarantorRelation,
-                'اسم الضامن': app.guarantorName,
-                'رقم الضامن': app.guarantorId,
-                'هاتف الضامن': app.guarantorPhone,
-                'علم الضامن': app.guarantorKnows,
-                'المبلغ المطلوب': app.loanAmount,
-                'سبب التمويل': app.reason,
-                'قروض أخرى': app.otherLoans,
-                'حالة الطلب': app.status,
-                'تاريخ التسجيل': app.timestamp
+                'رقم الطلب': app.appNumber, 'اسم العميل': app.fullName, 'الرقم القومي': app.nationalId,
+                'العنوان': app.address, 'الجنس': app.gender, 'الحالة الاجتماعية': app.marital,
+                'الشهادة': app.degree, 'مصدر الدخل': app.incomeSource, 'تفاصيل الوظيفة': app.jobDetails,
+                'الدخل الشهري': app.monthlyIncome, 'واتساب': app.whatsapp, 'فيسبوك': app.facebook,
+                'نوع المحفظة': app.walletType, 'رقم المحفظة': app.walletNumber, 'الرقم النشط': app.activeNumber,
+                'درجة قرابة الضامن': app.guarantorRelation, 'اسم الضامن': app.guarantorName,
+                'رقم الضامن': app.guarantorId, 'هاتف الضامن': app.guarantorPhone, 'علم الضامن': app.guarantorKnows,
+                'المبلغ المطلوب': app.loanAmount, 'سبب التمويل': app.reason, 'قروض أخرى': app.otherLoans,
+                'حالة الطلب': app.status, 'تاريخ التسجيل': app.timestamp
             }));
             const ws = XLSX.utils.json_to_sheet(exportData);
             const wb = XLSX.utils.book_new();
@@ -346,22 +347,21 @@
             const reader = new FileReader();
             reader.onload = async function(e) {
                 const base64 = e.target.result.split(',')[1];
-                const templateParams = {
-                    to_email: EMAILJS_CONFIG.toEmail,
-                    currentDate: new Date().toLocaleString('ar-EG'),
-                    count: applications.length,
-                    attachment: base64,
-                    filename: `طلبات_${Date.now()}.xlsx`
-                };
                 try {
-                    await emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateId, templateParams);
+                    await emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateId, {
+                        to_email: EMAILJS_CONFIG.toEmail,
+                        currentDate: new Date().toLocaleString('ar-EG'),
+                        count: applications.length,
+                        attachment: base64,
+                        filename: `طلبات_${Date.now()}.xlsx`
+                    });
                     alert('✅ تم إرسال التقرير إلى البريد الإلكتروني بنجاح!');
-                } catch(err) { console.error(err); alert('❌ فشل الإرسال. تأكد من بيانات EmailJS.'); }
+                } catch(err) { console.error(err); alert('❌ فشل الإرسال. تأكد من إعدادات EmailJS.'); }
             };
             reader.readAsDataURL(file);
         }
         
-        // حماية لوحة التحكم بكلمة مرور
+        // حماية المشرف
         let adminUnlocked = false;
         function showPasswordPrompt() {
             return new Promise((resolve) => {
@@ -381,65 +381,40 @@
                 const input = overlay.querySelector('#adminPasswordInput');
                 const submitBtn = overlay.querySelector('#submitPasswordBtn');
                 const cancelBtn = overlay.querySelector('#cancelPasswordBtn');
-                const checkPass = () => {
-                    if (input.value === ADMIN_PASSWORD) {
-                        overlay.remove();
-                        resolve(true);
-                    } else {
-                        alert('كلمة المرور غير صحيحة');
-                        input.value = '';
-                    }
+                const check = () => {
+                    if (input.value === ADMIN_PASSWORD) { overlay.remove(); resolve(true); }
+                    else { alert('كلمة المرور غير صحيحة'); input.value = ''; }
                 };
-                submitBtn.onclick = checkPass;
+                submitBtn.onclick = check;
                 cancelBtn.onclick = () => { overlay.remove(); resolve(false); };
-                input.onkeypress = (e) => { if (e.key === 'Enter') checkPass(); };
+                input.onkeypress = (e) => { if (e.key === 'Enter') check(); };
                 input.focus();
             });
         }
         
-        // التبديل بين التبويبات مع حماية تبويب المشرف
-        const tabs = document.querySelectorAll('.tab-btn');
-        const panels = {
-            register: document.getElementById('registerPanel'),
-            query: document.getElementById('queryPanel'),
-            admin: document.getElementById('adminPanel')
-        };
-        
         async function switchTab(tabId) {
             if (tabId === 'admin' && !adminUnlocked) {
-                const allowed = await showPasswordPrompt();
-                if (!allowed) {
-                    // إعادة التبويب النشط إلى ما كان عليه
-                    const activeTab = document.querySelector('.tab-btn.active');
-                    if (activeTab) return;
-                    else { document.querySelector('[data-tab="register"]').classList.add('active'); panels.register.classList.add('active'); }
-                    return;
-                }
+                const ok = await showPasswordPrompt();
+                if (!ok) return;
                 adminUnlocked = true;
             }
-            Object.values(panels).forEach(p => p.classList.remove('active'));
-            panels[tabId].classList.add('active');
-            tabs.forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(`${tabId}Panel`).classList.add('active');
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
             if (tabId === 'admin') renderAdminTable();
         }
         
-        tabs.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabId = btn.dataset.tab;
-                switchTab(tabId);
-            });
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab));
         });
         
-        // أحداث الأزرار داخل لوحة المشرف (تضاف بعد التصيير)
         document.getElementById('sendReportBtn')?.addEventListener('click', sendExcelReport);
         document.getElementById('refreshAdminBtn')?.addEventListener('click', () => { if (adminUnlocked) renderAdminTable(); });
         
-        // إظهار/إخفاء حقول المحفظة
         function toggleWalletFields() {
-            const type = document.getElementById('walletType').value;
-            document.getElementById('vodafoneField').style.display = type === 'فودافون كاش' ? 'block' : 'none';
-            document.getElementById('etisalatField').style.display = type === 'اتصالات كاش' ? 'block' : 'none';
+            document.getElementById('vodafoneField').style.display = document.getElementById('walletType').value === 'فودافون كاش' ? 'block' : 'none';
+            document.getElementById('etisalatField').style.display = document.getElementById('walletType').value === 'اتصالات كاش' ? 'block' : 'none';
         }
         document.getElementById('walletType').addEventListener('change', toggleWalletFields);
         toggleWalletFields();
