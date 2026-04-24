@@ -96,6 +96,25 @@
         .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a3a5a; }
         .detail-label { font-weight: 700; color: #FFD700; }
         .close-modal { background: #FF3366; margin-top: 20px; }
+        /* العقد المخصص */
+        .contract-box {
+            background: rgba(0,0,0,0.6);
+            border: 2px solid #FFD700;
+            border-radius: 20px;
+            padding: 20px;
+            margin: 20px 0;
+            font-size: 0.9rem;
+            line-height: 1.8;
+        }
+        .contract-box h4 { color: #FFD700; margin-bottom: 10px; }
+        .contract-details { margin: 15px 0; padding: 10px; background: rgba(0,217,255,0.1); border-radius: 12px; }
+        .accept-btn {
+            background: linear-gradient(135deg, #3FFF00, #00D9FF);
+            width: 100%;
+            padding: 14px;
+            font-size: 1.1rem;
+            margin-top: 10px;
+        }
         @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } .tab-btn { padding: 8px 20px; } }
     </style>
 </head>
@@ -107,7 +126,7 @@
         <p class="logo-sub">التمويل الفوري الذكي</p>
     </div>
 
-    <div class="tabs">
+    <div class="tabs" id="mainTabs">
         <button class="tab-btn active" data-tab="register">📝 تسجيل طلب جديد</button>
         <button class="tab-btn" data-tab="query">🔍 استعلام برقم البطاقة</button>
     </div>
@@ -159,19 +178,14 @@
                 <div class="file-row"><span class="file-label">صورة البطاقة الخلفية للعميل</span><input type="file" id="imgClientBack" accept="image/*"></div>
             </div>
 
-            <div style="margin: 25px 0; background: rgba(0,0,0,0.4); padding: 15px; border-radius: 20px; border-right: 4px solid #FFD700;">
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                    <input type="checkbox" id="termsAgree" required> 
-                    <span style="color: #FFD700;">أقر وأتعهد</span>
-                </label>
-                <p style="font-size: 0.85rem; color: #ccc; margin-top: 10px;">
-                    أنا بصفتي مقدم الطلب، أقر بأن شركة Cash Faster لها الحق الكامل في قبول أو رفض طلبي بناءً على تقييم البيانات المرسلة. 
-                    في حالة الرفض، لن أتمكن من استخدام الخدمة مرة أخرى إلا بعد مرور 90 يومًا من تاريخ الرفض. 
-                    كما أتحمل المسؤولية الكاملة عن صحة البيانات والمستندات المقدمة.
-                </p>
+            <!-- عقد الموافقة (يظهر ديناميكيًا باسم العميل ورقمه) -->
+            <div id="contractDiv" class="contract-box" style="display:none;">
+                <h4><i class="fas fa-file-signature"></i> عقد التمويل وإخلاء المسؤولية</h4>
+                <div id="contractText"></div>
+                <button type="button" id="acceptContractBtn" class="accept-btn">أوافق على جميع الشروط والأحكام</button>
             </div>
 
-            <button type="submit" style="width:100%;"><i class="fas fa-paper-plane"></i> إرسال الطلب</button>
+            <button type="submit" id="submitLoanBtn" style="width:100%; display:none;"><i class="fas fa-paper-plane"></i> إرسال الطلب</button>
             <div id="registerMsg"></div>
         </form>
     </div>
@@ -202,7 +216,7 @@
 
 <script>
     (function(){
-        // بيانات EmailJS (تأكد من صحتها)
+        // إعدادات EmailJS (تأكد من صحتها)
         const EMAILJS_CONFIG = {
             serviceId: 'service_zoiqvwn',
             templateId: 'template_w0vbf2i',
@@ -210,8 +224,22 @@
             toEmail: 'badr31940@gmail.com'
         };
         const ADMIN_PASSWORD = 'MiDo@2025##';
+        
+        // جلب أو توليد معرف فريد للجهاز (لمنع التسجيل المتعدد من نفس المتصفح)
+        let deviceId = localStorage.getItem('deviceId');
+        if(!deviceId) {
+            deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+            localStorage.setItem('deviceId', deviceId);
+        }
+        
         let applications = JSON.parse(localStorage.getItem('cashFasterApps')) || [];
-        function saveToLocal() { localStorage.setItem('cashFasterApps', JSON.stringify(applications)); }
+        // تسجيل الأجهزة التي قامت بالتسجيل بالفعل لمنع تكرار التسجيل من نفس الجهاز حتى لو غير البطاقة
+        let registeredDevices = JSON.parse(localStorage.getItem('registeredDevices')) || [];
+        
+        function saveToLocal() { 
+            localStorage.setItem('cashFasterApps', JSON.stringify(applications));
+            localStorage.setItem('registeredDevices', JSON.stringify(registeredDevices));
+        }
         
         // ضغط الصور
         function compressImage(file, maxWidth=800, quality=0.6) {
@@ -236,7 +264,7 @@
             });
         }
         
-        // إظهار حقل الرقم المتاح فقط عند اختيار "لا يوجد محفظة"
+        // إظهار/إخفاء الحقول
         const walletType = document.getElementById('walletType');
         const activeNumberField = document.getElementById('activeNumberField');
         function toggleActiveNumberField() {
@@ -260,13 +288,61 @@
             return 'غير مسجل';
         }
         
+        // تحديث نص العقد تلقائيًا عند تغيير الاسم أو الرقم القومي
+        const fullNameInput = document.getElementById('fullName');
+        const nationalIdInput = document.getElementById('nationalId');
+        const contractDiv = document.getElementById('contractDiv');
+        const contractTextSpan = document.getElementById('contractText');
+        const submitBtn = document.getElementById('submitLoanBtn');
+        
+        function updateContract() {
+            const name = fullNameInput.value.trim();
+            const nationalId = nationalIdInput.value.trim();
+            if(name !== "" && nationalId !== "") {
+                contractDiv.style.display = 'block';
+                contractTextSpan.innerHTML = `
+                    <div class="contract-details">
+                        <strong>العميل:</strong> ${name}<br>
+                        <strong>الرقم القومي:</strong> ${nationalId}<br>
+                    </div>
+                    <p>أقر أنا <strong>${name}</strong> (الرقم القومي ${nationalId}) بأن شركة Cash Faster لها الحق الكامل في قبول أو رفض طلبي بناءً على تقييم البيانات والمستندات المرسلة. في حالة الرفض، لن أتمكن من التقديم مرة أخرى إلا بعد مرور 90 يومًا من تاريخ الرفض. أتحمل المسؤولية الكاملة عن صحة جميع البيانات والمستندات المقدمة، وأوافق على أن أي معلومات غير صحيحة تؤدي إلى رفض طلبي وحظر دائم.</p>
+                    <p>كما أوافق على استخدام رقم هاتفي وبياناتي للتواصل معي بخصوص الطلب، وعلى أن جميع المبالغ المالية سيتم صرفها من خلال المحفظة الإلكترونية المسجلة باسمي.</p>
+                `;
+                submitBtn.style.display = 'block';
+            } else {
+                contractDiv.style.display = 'none';
+                submitBtn.style.display = 'none';
+            }
+        }
+        
+        fullNameInput.addEventListener('input', updateContract);
+        nationalIdInput.addEventListener('input', updateContract);
+        
+        // منع التسجيل لنفس البطاقة أو نفس الجهاز
+        function canRegister(nationalId) {
+            // التحقق من وجود نفس البطاقة في الطلبات السابقة
+            const existingApp = applications.find(app => app.nationalId === nationalId);
+            if(existingApp) return { allowed: false, reason: 'هذا الرقم القومي مسجل مسبقًا.' };
+            // التحقق من أن هذا الجهاز لم يسجل من قبل (deviceId)
+            if(registeredDevices.includes(deviceId)) return { allowed: false, reason: 'لا يمكنك التسجيل أكثر من مرة من نفس الجهاز.' };
+            return { allowed: true };
+        }
+        
         // تسجيل طلب جديد
         document.getElementById('loanForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const terms = document.getElementById('termsAgree');
-            if(!terms.checked) { alert('يجب الموافقة على شروط وأحكام التمويل.'); return; }
+            const nationalId = nationalIdInput.value.trim();
+            const check = canRegister(nationalId);
+            if(!check.allowed) {
+                alert(check.reason);
+                return;
+            }
+            
+            const termsCheck = document.getElementById('acceptContractBtn');
+            if(!termsCheck) return;
+            
             const msgDiv = document.getElementById('registerMsg');
-            msgDiv.innerHTML = '<div class="success-msg"><i class="fas fa-spinner fa-spin"></i> جاري الحفظ...</div>';
+            msgDiv.innerHTML = '<div class="success-msg"><i class="fas fa-spinner fa-spin"></i> جاري حفظ الطلب...</div>';
             try {
                 const fileIds = ['imgGuarFront','imgGuarBack','imgSelfie','imgClientFront','imgClientBack'];
                 const comps = await Promise.all(fileIds.map(async id => {
@@ -277,8 +353,8 @@
                 const newApp = {
                     appNumber: 'CF-' + Date.now() + '-' + Math.floor(Math.random()*10000),
                     timestamp: new Date().toISOString(),
-                    fullName: document.getElementById('fullName').value,
-                    nationalId: document.getElementById('nationalId').value,
+                    fullName: fullNameInput.value,
+                    nationalId: nationalId,
                     address: document.getElementById('address').value,
                     gender: document.getElementById('gender').value,
                     marital: document.getElementById('marital').value,
@@ -303,14 +379,44 @@
                     status: 'مراجعة'
                 };
                 applications.unshift(newApp);
+                registeredDevices.push(deviceId);
                 saveToLocal();
+                
+                // إعادة تعيين النموذج
                 document.getElementById('loanForm').reset();
                 toggleWalletFields();
                 toggleActiveNumberField();
-                msgDiv.innerHTML = '<div class="success-msg">✅ تم استلام طلبك بنجاح! سيتم مراجعته قريباً.</div>';
-                alert(`🎉 تم استلام طلبك بنجاح! يمكنك متابعة الحالة باستخدام الاستعلام برقم بطاقتك.`);
-                setTimeout(() => msgDiv.innerHTML = '', 7000);
-            } catch(err) { console.error(err); msgDiv.innerHTML = '<div class="success-msg" style="background:#FF336620;">حدث خطأ، حاول مرة أخرى.</div>'; }
+                contractDiv.style.display = 'none';
+                submitBtn.style.display = 'none';
+                
+                // رسالة منبثقة + تحويل العميل إلى تبويب الاستعلام
+                alert(`✅ تم استلام طلبك بنجاح! رقم طلبك: ${newApp.appNumber}\nيمكنك الآن متابعة حالة طلبك من خلال تبويب "استعلام برقم البطاقة".`);
+                // التبديل إلى تبويب الاستعلام
+                document.querySelector('[data-tab="query"]').click();
+                msgDiv.innerHTML = '';
+            } catch(err) { 
+                console.error(err); 
+                msgDiv.innerHTML = '<div class="success-msg" style="background:#FF336620;">حدث خطأ، حاول مرة أخرى.</div>';
+            }
+        });
+        
+        // قبول العقد (زر منفصل)
+        let contractAccepted = false;
+        document.getElementById('acceptContractBtn')?.addEventListener('click', () => {
+            contractAccepted = true;
+            alert('تم قبول العقد. يمكنك الآن إرسال الطلب.');
+            document.getElementById('acceptContractBtn').style.opacity = '0.5';
+            document.getElementById('acceptContractBtn').disabled = true;
+        });
+        
+        // تعديل حدث إرسال النموذج ليشمل التحقق من قبول العقد
+        const originalSubmit = document.getElementById('loanForm').submit;
+        document.getElementById('loanForm').addEventListener('submit', function(e) {
+            if(!contractAccepted) {
+                e.preventDefault();
+                alert('يجب الموافقة على العقد أولاً بالضغط على زر "أوافق على جميع الشروط والأحكام".');
+                return false;
+            }
         });
         
         // استعلام العميل برقم البطاقة
@@ -324,12 +430,14 @@
             let statusText = app.status === 'مراجعة' ? 'قيد المراجعة' : (app.status === 'قبول' ? '✅ موافقة مبدئية' : '❌ مرفوض');
             let extra = '';
             if(app.status === 'قبول') {
+                // رابط واتساب يحتوي على اسم العميل ورقمه القومي تلقائيًا
+                const whatsappMsg = `السلام عليكم، أنا ${app.fullName} (الرقم القومي ${app.nationalId})، تمت الموافقة على طلبي رقم ${app.appNumber} بمبلغ ${app.loanAmount} ج.م، أريد متابعة إجراءات صرف القرض.`;
                 extra = `<div style="margin-top:20px; background:#00D9FF20; padding:15px; border-radius:20px;">
                             <i class="fab fa-whatsapp"></i> <strong>تمت الموافقة على طلبك!</strong><br>
                             المبلغ: ${app.loanAmount} ج.م<br>
                             يرجى التواصل مع التحويلات المالية عبر واتساب:<br>
-                            <a href="https://wa.me/212614494251?text=السلام عليكم، تمت الموافقة على طلبي رقم ${app.appNumber} والمبلغ ${app.loanAmount} ج.م" target="_blank" style="display:inline-block; background:#25D366; color:white; padding:10px 20px; border-radius:30px; margin-top:15px; text-decoration:none;">
-                                <i class="fab fa-whatsapp"></i> اضغط للتواصل
+                            <a href="https://wa.me/212614494251?text=${encodeURIComponent(whatsappMsg)}" target="_blank" style="display:inline-block; background:#25D366; color:white; padding:10px 20px; border-radius:30px; margin-top:15px; text-decoration:none;">
+                                <i class="fab fa-whatsapp"></i> اضغط للتواصل (سيتم إرسال اسمك ورقمك تلقائيًا)
                             </a>
                          </div>`;
             } else if(app.status === 'رفض') {
@@ -365,7 +473,6 @@
             }
         });
         
-        // وظيفة عرض تفاصيل الطلب كاملة (مودال)
         function showFullDetails(app) {
             const modal = document.createElement('div');
             modal.className = 'detail-modal';
@@ -393,7 +500,7 @@
                     <div class="detail-row"><span class="detail-label">واتساب:</span><span>${app.whatsapp}</span></div>
                     <div class="detail-row"><span class="detail-label">فيسبوك:</span><span>${app.facebook}</span></div>
                     <div class="detail-row"><span class="detail-label">نوع المحفظة:</span><span>${app.walletType} - ${app.walletNumber}</span></div>
-                    <div class="detail-row"><span class="detail-label">الرقم المتاح (للمحفظة الجديدة):</span><span>${app.activeNumber || 'لا يوجد'}</span></div>
+                    <div class="detail-row"><span class="detail-label">الرقم المتاح:</span><span>${app.activeNumber || 'لا يوجد'}</span></div>
                     <div class="detail-row"><span class="detail-label">الضامن:</span><span>${app.guarantorName} (${app.guarantorRelation})</span></div>
                     <div class="detail-row"><span class="detail-label">رقم الضامن:</span><span>${app.guarantorId}</span></div>
                     <div class="detail-row"><span class="detail-label">موبايل الضامن:</span><span>${app.guarantorPhone}</span></div>
@@ -434,7 +541,6 @@
             });
             html += '</tbody></table><button id="saveStatusBtn" style="margin-top:20px;">حفظ التغييرات</button>';
             container.innerHTML = html;
-            // ربط أزرار عرض التفاصيل
             document.querySelectorAll('.view-details-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const idx = parseInt(btn.dataset.idx);
@@ -486,7 +592,7 @@
                     alert('✅ تم إرسال التقرير إلى بريدك الإلكتروني');
                 } catch(err) { 
                     console.error(err);
-                    alert('❌ فشل الإرسال. تأكد من إعدادات EmailJS (Service ID, Template ID, Public Key) وأن القالب يسمح بالمرفقات.');
+                    alert('❌ فشل الإرسال. تأكد من إعدادات EmailJS.');
                 }
             };
             reader.readAsDataURL(file);
@@ -507,6 +613,9 @@
                 btn.classList.add('active');
             });
         });
+        
+        // تحديث العقد أول مرة
+        updateContract();
     })();
 </script>
 </body>
